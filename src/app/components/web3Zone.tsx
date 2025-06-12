@@ -18,6 +18,7 @@ function Web3U({
   const [receipientAddress, setRecipientAddress] = useState<string | null>(null);
   const [ethToSend, setEthToSend] = useState<number | null>(0.001);
   const [busySendingEth, setBusySendingEth] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Get chain info from multiple sources
   const effectiveChain = chain;
@@ -43,7 +44,7 @@ function Web3U({
     address,
     query: {
       refetchInterval: 3000,
-      enabled: !!address && (!!effectiveChain || !!effectiveChainId), // Use either chain or chainId
+      enabled: !!address && (!!effectiveChain || !!effectiveChainId),
     },
   });
 
@@ -54,35 +55,54 @@ function Web3U({
 
   const { sendTransaction, error: sendTxError } = useSendTransaction();
 
-  if(sendTxError) {
-    console.log("Error sending transaction", sendTxError);
-  }
+  useEffect(() => {
+    if (sendTxError) {
+      console.error("Error sending transaction:", sendTxError);
+      setError(sendTxError.message);
+    }
+  }, [sendTxError]);
 
-  const sendEth =  useCallback(() => {
-    if (!ethToSend || !receipientAddress) return;
+  const sendEth = useCallback(() => {
+    if (!ethToSend || !receipientAddress) {
+      setError("Please enter both amount and recipient address");
+      return;
+    }
+
+    if (!effectiveChain && !effectiveChainId) {
+      setError("Cannot send transaction: Chain not available");
+      return;
+    }
+
+    setError(null);
     setBusySendingEth(true);
+    
     sendTransaction({
       to: receipientAddress as `0x${string}`,
       value: BigInt(ethToSend * 1e18),
     }, {
-        onSettled: () => {
-            setBusySendingEth(false);
-        }
+      onSettled: () => {
+        setBusySendingEth(false);
+      },
+      onError: (error) => {
+        setError(error.message);
+        setBusySendingEth(false);
+      }
     });
-  }, [receipientAddress, ethToSend, sendTransaction]);
+  }, [receipientAddress, ethToSend, sendTransaction, effectiveChain, effectiveChainId]);
+
+  if (!isConnected || isLoading) {
+    return (
+      <div className="text-gray-900 dark:text-white">
+        <div>Connecting wallet. Please wait...</div>
+        {isLoading && <div className="text-sm text-gray-600 dark:text-gray-400 mt-2">Loading user data...</div>}
+        {walletCreationInProgress && <div className="text-sm text-gray-600 dark:text-gray-400 mt-2">Creating wallet...</div>}
+      </div>
+    );
+  }
 
   return (
-    <>
-      {!isConnected || isLoading ? (
-        <div className="text-gray-900 dark:text-white">
-          <div>Connecting wallet. Please wait...</div>
-          {isLoading && <div className="text-sm text-gray-600 dark:text-gray-400 mt-2">Loading user data...</div>}
-          {walletCreationInProgress && <div className="text-sm text-gray-600 dark:text-gray-400 mt-2">Creating wallet...</div>}
-        </div>
-      ) : null}
-      
-      {/* Show warning only if we truly don't have chain info */}
-      {!effectiveChain && !effectiveChainId && isConnected && (
+    <div className="flex flex-col gap-4 bg-white dark:bg-gray-800 p-6 rounded-lg shadow-lg w-full max-w-md">
+      {!effectiveChain && !effectiveChainId && (
         <div className="bg-yellow-100 dark:bg-yellow-900 border border-yellow-400 text-yellow-700 dark:text-yellow-300 px-4 py-3 rounded mb-4">
           <strong>Warning:</strong> Wallet connected but chain is undefined. This might be due to:
           <ul className="list-disc list-inside mt-2 text-sm">
@@ -93,39 +113,47 @@ function Web3U({
         </div>
       )}
 
-      {isConnected && !isLoading && <div
-        className={`${!isConnected ? "pointer-events-none opacity-50" : ""} flex flex-col gap-4 bg-white dark:bg-gray-800 p-6 rounded-lg shadow-lg`}
-      >
-        <div className="flex flex-col items-center justify-between gap-2 sm:flex-row">
-          <div className="flex flex-col text-gray-900 dark:text-white">
-            <span>Chain: {effectiveChain?.name || `Chain ID ${effectiveChainId}` || "Unknown/Undefined"}</span>
-            <span>Chain ID: {effectiveChainId || "N/A"}</span>
-            <span>Wallet address: {address}</span>
-            <span>Balance: {formatBalanceEth(ethBalance?.data?.value)} ETH</span>
-            {ethBalance.isError && <span className="text-red-500 text-sm">Error loading balance</span>}
-          </div>
+      <div className="flex flex-col items-center justify-between gap-2 sm:flex-row">
+        <div className="flex flex-col text-gray-900 dark:text-white">
+          <span>Chain: {effectiveChain?.name || `Chain ID ${effectiveChainId}` || "Unknown/Undefined"}</span>
+          <span>Chain ID: {effectiveChainId || "N/A"}</span>
+          <span>Wallet address: {address}</span>
+          <span>Balance: {formatBalanceEth(ethBalance?.data?.value)} ETH</span>
+          {ethBalance.isError && <span className="text-red-500 text-sm">Error loading balance</span>}
         </div>
+      </div>
 
-        <div className="flex flex-col gap-2" >
-            <span className="text-gray-900 dark:text-white">Send ETH to wallet:</span>
-            <label className="text-gray-700 dark:text-gray-300">ETH to send:</label>
-            <input type="number" className="bg-white dark:bg-gray-700 text-black dark:text-white border border-gray-300 dark:border-gray-600 rounded px-3 py-2" placeholder="0.001" id="amount" onChange={(evt) => setEthToSend(parseFloat(evt.target.value))} />
-            <label className="text-gray-700 dark:text-gray-300">Recipient address:</label>
-            <input type="text" className="bg-white dark:bg-gray-700 text-black dark:text-white border border-gray-300 dark:border-gray-600 rounded px-3 py-2" placeholder="0x..." id="recipient" onChange={(evt) => setRecipientAddress(evt.target.value)} />
-            <button
-               className={`mt-2 rounded px-4 py-2 text-white 
-                ${!receipientAddress || !ethToSend || busySendingEth || (!effectiveChain && !effectiveChainId)
-                  ? 'bg-blue-300 cursor-not-allowed' 
-                  : 'bg-blue-500 hover:bg-blue-600'}`}
-              disabled={!receipientAddress || !ethToSend || busySendingEth || (!effectiveChain && !effectiveChainId)}
-              onClick={sendEth}
-            >{busySendingEth ? 'Sending transaction...' : 'Send transaction'}</button>
-            {sendTxError && <div className="text-red-500 w-50">Error sending transaction</div>}
-            {!effectiveChain && !effectiveChainId && <div className="text-yellow-600 text-sm">Cannot send transactions: Chain not available</div>}
-        </div>
-
-      </div>}
-    </>
+      <div className="flex flex-col gap-2">
+        <span className="text-gray-900 dark:text-white">Send ETH to wallet:</span>
+        <label className="text-gray-700 dark:text-gray-300">ETH to send:</label>
+        <input 
+          type="number" 
+          className="bg-white dark:bg-gray-700 text-black dark:text-white border border-gray-300 dark:border-gray-600 rounded px-3 py-2" 
+          placeholder="0.001" 
+          value={ethToSend || ''} 
+          onChange={(evt) => setEthToSend(parseFloat(evt.target.value))} 
+        />
+        <label className="text-gray-700 dark:text-gray-300">Recipient address:</label>
+        <input 
+          type="text" 
+          className="bg-white dark:bg-gray-700 text-black dark:text-white border border-gray-300 dark:border-gray-600 rounded px-3 py-2" 
+          placeholder="0x..." 
+          value={receipientAddress || ''} 
+          onChange={(evt) => setRecipientAddress(evt.target.value)} 
+        />
+        <button
+          className={`mt-2 rounded px-4 py-2 text-white 
+            ${!receipientAddress || !ethToSend || busySendingEth || (!effectiveChain && !effectiveChainId)
+              ? 'bg-blue-300 cursor-not-allowed' 
+              : 'bg-blue-500 hover:bg-blue-600'}`}
+          disabled={!receipientAddress || !ethToSend || busySendingEth || (!effectiveChain && !effectiveChainId)}
+          onClick={sendEth}
+        >
+          {busySendingEth ? 'Sending transaction...' : 'Send transaction'}
+        </button>
+        {error && <div className="text-red-500 text-sm mt-2">{error}</div>}
+      </div>
+    </div>
   );
 }
 
@@ -142,9 +170,9 @@ function Web3Zone() {
     });
   }, [user, isLoading, walletCreationInProgress]);
 
-  if (!isLoading && !user)
+  if (!isLoading && !user) {
     return (
-      <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-lg">
+      <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-lg w-full max-w-md">
         <div className="mb-4 text-gray-900 dark:text-white text-center">
           <h3 className="text-lg font-semibold mb-2">Web3 Wallet Access</h3>
           <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
@@ -156,9 +184,9 @@ function Web3Zone() {
         </div>
       </div>
     );
+  }
 
-  return (
-    <Web3U walletCreationInProgress={walletCreationInProgress} />
-  );
+  return <Web3U walletCreationInProgress={walletCreationInProgress} />;
 }
+
 export { Web3Zone };
